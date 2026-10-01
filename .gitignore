@@ -1,0 +1,6 @@
+target/
+cp.txt
+.idea/
+*.iml
+.vscode/
+.DS_Store
