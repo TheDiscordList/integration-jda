@@ -14,8 +14,8 @@ import java.util.concurrent.ThreadLocalRandom;
 /**
  * The one HTTP client every publisher shares.
  *
- * <p>There is a single client-side suspension rather than one per endpoint, because the server keeps one
- * rate-limit counter per client IP across every bot route. Heartbeats bypass it: a dropped stats post is a
+ * <p>There is a single client-side suspension rather than one per endpoint, because the server counts stats
+ * and commands against one per-bot budget. Heartbeats bypass it: a dropped stats post is a
  * stale number, a dropped heartbeat is a false "down" on the public status page.
  */
 final class ApiClient {

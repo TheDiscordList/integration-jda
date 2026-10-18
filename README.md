@@ -234,10 +234,10 @@ heartbeat's internal stats forward.
   suspends and re-probes every 30 minutes rather than disabling: the plan is
   checked per request, so a bot can gain it mid-run.
 - **Rate limits are shared.** Stats and commands share 60 requests a minute per
-  client IP, heartbeats get 120. A `429` suspends stats and commands together,
+  bot, heartbeats get 120. A `429` suspends stats and commands together,
   honouring `Retry-After` and `X-RateLimit-Reset` for at most an hour;
   heartbeats are never held back by it, since a dropped heartbeat reads as
-  "down". Other bots behind the same egress IP count against you.
+  "down".
 - **`404` never means "bad token".** It means the id is unknown or belongs to a
   server listing, and disables only that publisher. A `401` is the bad token,
   and stops every publisher.
