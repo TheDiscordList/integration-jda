@@ -4,6 +4,7 @@ import com.thediscordlist.jda.Webhooks.Code;
 import com.thediscordlist.jda.Webhooks.VerificationException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import javax.crypto.Mac;
@@ -102,6 +103,13 @@ class WebhooksTest {
                 Duration.ofSeconds(10), at(T + 11))).code());
     }
 
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {" ", "\t\n"})
+    void blankSecretsFailClosed(String secret) {
+        assertThrows(IllegalArgumentException.class, () -> verify(BODY, "t=1700000000,v1=" + VECTOR_V1, secret, T));
+    }
+
     @Test
     void missingHeaderFails() {
         assertEquals(Code.MISSING_SIGNATURE, failure(BODY, null, SECRET, T));
@@ -148,6 +156,17 @@ class WebhooksTest {
 
         String array = "[1,2]";
         assertEquals(Code.MALFORMED_BODY, failure(array, "t=1700000000,v1=" + hmac(SECRET, T + "." + array), SECRET, T));
+    }
+
+    @Test
+    void bumpReadyCarriesReadyAt() throws Exception {
+        String body = "{\"id\":\"d3\",\"event\":\"listing.bump_ready\",\"created_at\":\"2023-11-14T22:13:20+00:00\","
+                + "\"listing\":{\"id\":\"9\",\"type\":\"server\",\"name\":\"S\",\"url\":\"u\"},"
+                + "\"data\":{\"ready_at\":\"2023-11-14T22:13:20+00:00\"}}";
+        Webhooks.Event event = verify(body, "t=1700000000,v1=" + hmac(SECRET, T + "." + body), SECRET, T);
+
+        assertEquals("listing.bump_ready", event.event());
+        assertEquals("2023-11-14T22:13:20+00:00", event.data().path("ready_at").asText());
     }
 
     @Test

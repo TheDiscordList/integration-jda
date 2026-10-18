@@ -197,6 +197,7 @@ in constant time, and returns the parsed envelope. Failures throw
 | `event.event()` | `event.data()` |
 | --- | --- |
 | `listing.bumped` | `points`, `bumped_at`, `next_bump_at`, `user` |
+| `listing.bump_ready` | `ready_at` |
 | `listing.upvoted` | `voted_at`, `total_upvotes`, `user` |
 | `server.joined` | `joined_at`, `user` (server listings only) |
 | `bot.added` | `added_at`, `user` |

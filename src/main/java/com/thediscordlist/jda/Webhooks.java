@@ -66,9 +66,9 @@ public final class Webhooks {
      * A verified delivery.
      *
      * @param id        equals {@code X-TDL-Delivery} and is stable across retries; deduplicate on it
-     * @param event     {@code listing.bumped}, {@code listing.upvoted}, {@code server.joined}, {@code bot.added},
-     *                  {@code bot.stats_reported}, {@code webhook.ping}, or a newer name this version does not
-     *                  know yet
+     * @param event     {@code listing.bumped}, {@code listing.bump_ready}, {@code listing.upvoted},
+     *                  {@code server.joined}, {@code bot.added}, {@code bot.stats_reported}, {@code webhook.ping},
+     *                  or a newer name this version does not know yet
      * @param createdAt ISO 8601 enqueue time, not send time
      * @param data      the event-specific fields
      * @param raw       the whole parsed body
@@ -96,7 +96,7 @@ public final class Webhooks {
      */
     public static Event verify(byte[] rawBody, String signatureHeader, String secret, Duration tolerance, Clock clock)
             throws VerificationException {
-        if (secret == null || secret.isEmpty()) {
+        if (secret == null || secret.isBlank()) {
             throw new IllegalArgumentException("A webhook secret is required.");
         }
         if (signatureHeader == null || signatureHeader.isBlank()) {
