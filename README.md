@@ -37,7 +37,7 @@ It starts three publishers:
 | Publisher | What it sends | Cadence |
 | --- | --- | --- |
 | Stats | `server_count`, `shard_count` | 5s after ready, then every 5 min, debounced on guild join/leave |
-| Heartbeat | per-shard status, latency and guild counts | every ~30s, plus shortly after any shard status change |
+| Heartbeat | per-shard status, latency and guild counts | every ~30s, plus after any shard status change, at least 10s after the previous beat |
 | Commands | your registered global slash commands | once, ~10s after ready |
 
 Your **stats token** is on the listing's manage page, under the API tab. It is
@@ -234,16 +234,17 @@ heartbeat's internal stats forward.
   checked per request, so a bot can gain it mid-run.
 - **Rate limits are shared.** Stats and commands share 60 requests a minute per
   client IP, heartbeats get 120. A `429` suspends stats and commands together,
-  honouring `Retry-After` and `X-RateLimit-Reset`; heartbeats are never held
-  back by it, since a dropped heartbeat reads as "down". Other bots behind the
-  same egress IP count against you.
+  honouring `Retry-After` and `X-RateLimit-Reset` for at most an hour;
+  heartbeats are never held back by it, since a dropped heartbeat reads as
+  "down". Other bots behind the same egress IP count against you.
 - **`404` never means "bad token".** It means the id is unknown or belongs to a
   server listing, and disables only that publisher. A `401` is the bad token,
   and stops every publisher.
 - `409` on commands means the listing is not set up for slash commands; the
   commands publisher switches off.
-- Transient failures (5xx, timeouts, network) are retried twice with jittered
-  exponential backoff, then left to the next run.
+- Transient failures (`408`, `425`, 5xx, timeouts, network) are retried twice
+  with jittered exponential backoff, then left to the next run. Any other `4xx`
+  is reported once and not retried.
 
 ## Requirements
 

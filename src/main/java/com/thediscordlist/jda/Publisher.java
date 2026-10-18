@@ -348,11 +348,13 @@ abstract class Publisher {
         static final long MAX_INTERVAL_MS = 60_000;
         static final long JITTER_MS = 5_000;
         static final long BEAT_NOW_DELAY_MS = 1_000;
+        static final long OUT_OF_BAND_GAP_MS = 10_000;
 
         private long interval;
         private boolean started;
         private boolean beatNowPending;
         private long nextTarget;
+        private Long lastBeatAt;
         private Double nextBeatWithinSeconds;
 
         Heartbeat(Autoposter owner, Context ctx) {
@@ -377,13 +379,17 @@ abstract class Publisher {
             schedule(0, this::tick);
         }
 
-        /** An out-of-band beat after a shard transition. Calls inside the delay coalesce into one. */
+        /**
+         * An out-of-band beat after a shard transition, no sooner than ten seconds after the previous beat. Calls
+         * inside the delay coalesce into one.
+         */
         void beatNow() {
             if (!started || disabledReason != null || beatNowPending || now() < suspendedUntil) {
                 return;
             }
             beatNowPending = true;
-            schedule(BEAT_NOW_DELAY_MS, this::tick);
+            long earliest = lastBeatAt == null ? 0 : lastBeatAt + OUT_OF_BAND_GAP_MS;
+            schedule(Math.max(earliest - now(), BEAT_NOW_DELAY_MS), this::tick);
         }
 
         @Override
@@ -428,6 +434,7 @@ abstract class Publisher {
             body.put("cluster", ctx.topology().clusterId());
             body.put("cluster_count", ctx.topology().clusterCount());
             body.put("shards", shards);
+            lastBeatAt = now();
             PostResult result = send("/bots/" + ctx.botId() + "/heartbeat", body, true, interval);
             if (result.ok()) {
                 retune();

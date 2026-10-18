@@ -22,6 +22,7 @@ final class ApiClient {
     static final ObjectMapper JSON = new ObjectMapper();
     static final Duration TIMEOUT = Duration.ofSeconds(10);
     static final long DEFAULT_RETRY_AFTER_MS = 60_000;
+    static final long MAX_RETRY_AFTER_MS = 3_600_000;
 
     enum Kind { OK, PAYLOAD, AUTH, PLAN, CONFIG, THROTTLED, TRANSIENT, DROPPED }
 
@@ -35,7 +36,7 @@ final class ApiClient {
     private final String baseUrl;
     private final String token;
     private final String userAgent;
-    private volatile long suspendedUntil;
+    volatile long suspendedUntil;
 
     ApiClient(String baseUrl, String token, String userAgent) {
         this.baseUrl = baseUrl;
@@ -43,12 +44,8 @@ final class ApiClient {
         this.userAgent = userAgent;
     }
 
-    long suspendedUntil() {
-        return suspendedUntil;
-    }
-
     Outcome post(String path, Object body, boolean heartbeat) {
-        if (!heartbeat && System.currentTimeMillis() < suspendedUntil) {
+        if (!heartbeat && Publisher.now() < suspendedUntil) {
             return Outcome.of(Kind.DROPPED, null);
         }
 
@@ -86,22 +83,36 @@ final class ApiClient {
         if (status == 404 || status == 409) {
             return Outcome.of(Kind.CONFIG, status);
         }
-        if (status == 400 || status == 422) {
-            return Outcome.of(Kind.PAYLOAD, status);
-        }
         if (status == 429) {
             suspend(response.headers());
             return Outcome.of(Kind.THROTTLED, status);
         }
-        return new Outcome(Kind.TRANSIENT, status, null, "TheDiscordList responded " + status + ".");
+        if (status == 408 || status == 425 || status >= 500) {
+            return new Outcome(Kind.TRANSIENT, status, null, "TheDiscordList responded " + status + ".");
+        }
+        return Outcome.of(Kind.PAYLOAD, status);
+    }
+
+    /** {@code HttpClient} is closeable from Java 21. Before that its threads end once it is unreachable. */
+    void close() {
+        if (http instanceof AutoCloseable closeable) {
+            try {
+                closeable.close();
+            } catch (Exception e) {
+                // Best effort: the publishers are already stopped.
+            }
+        }
     }
 
     private void suspend(HttpHeaders headers) {
         double retryAfter = number(headers.firstValue("Retry-After").orElse(null));
         double reset = number(headers.firstValue("X-RateLimit-Reset").orElse(null));
-        long retryAfterMs = retryAfter > 0 ? Math.round(retryAfter * 1000) : DEFAULT_RETRY_AFTER_MS;
-        long resetAt = reset > 0 ? Math.round(reset * 1000) : 0;
-        suspendedUntil = Math.max(System.currentTimeMillis() + retryAfterMs, resetAt)
+        long waitMs = retryAfter > 0 ? Math.round(retryAfter * 1000) : DEFAULT_RETRY_AFTER_MS;
+        // The reset is a wall-clock epoch, so only the time left until it carries over to the monotonic clock.
+        if (reset > 0) {
+            waitMs = Math.max(waitMs, Math.round(reset * 1000) - System.currentTimeMillis());
+        }
+        suspendedUntil = Publisher.now() + Math.min(waitMs, MAX_RETRY_AFTER_MS)
                 + ThreadLocalRandom.current().nextLong(2_001);
     }
 
