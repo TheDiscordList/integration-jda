@@ -53,7 +53,7 @@ environment variable never takes down a deploy.
 | --- | --- | --- | --- |
 | One `JDA`, unsharded | the guild cache | this process | cluster 0 of 1 |
 | `ShardManager` running every shard | the guild cache of all shards | this process | cluster 0 of 1, every shard |
-| One `JDA` per process (`useSharding(id, total)`) | your `serverCount(...)` | shard 0 | cluster = shard id, of `total` |
+| One `JDA` per process (`useSharding(id, total)`) | your `serverCount(...)` | shard 0 | only with `cluster(id, count)` |
 | `ShardManager` running some shards per process | your `serverCount(...)` | the process with shard 0 | only with `cluster(id, count)` |
 
 ```java
@@ -64,9 +64,9 @@ Every process heartbeats for **itself**, with its own shards. A manager
 reporting "all fine" for a process whose host has died is exactly the failure
 the status page exists to catch.
 
-JDA has no way to ask another process for its guild count, so a bot split
-across processes needs to supply the total, and name its cluster when this
-package cannot work it out:
+JDA has no way to ask another process for its guild count or how many
+processes there are, so a bot split across processes needs to supply the total
+and name its cluster:
 
 ```java
 TheDiscordList.autopost(shardManager, System.getenv("TDL_TOKEN"), new AutopostOptions()

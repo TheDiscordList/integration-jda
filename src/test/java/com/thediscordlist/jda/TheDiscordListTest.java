@@ -37,10 +37,10 @@ class TheDiscordListTest {
         // Every shard in this process: a ShardManager, or an unsharded bot.
         assertEquals(Topology.allLocal(4), TheDiscordList.detect(null, 4, 4, 0));
         assertEquals(Topology.allLocal(1), TheDiscordList.detect(null, 1, 1, 0));
-        // One JDA per process (JDABuilder#useSharding): the shard is the cluster.
-        assertEquals(new Topology(2, 4, false, 4, false), TheDiscordList.detect(null, 1, 4, 2));
-        assertEquals(new Topology(0, 4, true, 4, false), TheDiscordList.detect(null, 1, 4, 0));
-        // A ShardManager running some of the shards: the cluster count is unknowable.
+        // Some of the shards, one JDA per process (JDABuilder#useSharding) included: the cluster count is
+        // unknowable, and a guess would let a sibling with a smaller count delete this cluster's row.
+        assertEquals(new Topology(2, null, false, 4, false), TheDiscordList.detect(null, 1, 4, 2));
+        assertEquals(new Topology(0, null, true, 4, false), TheDiscordList.detect(null, 1, 4, 0));
         assertNull(TheDiscordList.detect(null, 2, 8, 0).clusterCount());
         assertTrue(TheDiscordList.detect(null, 2, 8, 0).statsPublisher());
         assertFalse(TheDiscordList.detect(null, 2, 8, 4).statsPublisher());
