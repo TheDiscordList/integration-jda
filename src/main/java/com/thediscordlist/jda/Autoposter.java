@@ -19,7 +19,7 @@ import java.util.function.Consumer;
  */
 public final class Autoposter implements AutoCloseable {
     /** Kept in step with the POM by a test. */
-    public static final String VERSION = "0.1.0";
+    public static final String VERSION = "0.2.0";
 
     private static final System.Logger LOG = System.getLogger(Autoposter.class.getPackageName());
 
