@@ -19,7 +19,7 @@ import java.util.function.Consumer;
  */
 public final class Autoposter implements AutoCloseable {
     /** Kept in step with the POM by a test. */
-    public static final String VERSION = "0.1.0";
+    public static final String VERSION = "0.2.0";
 
     private static final System.Logger LOG = System.getLogger(Autoposter.class.getPackageName());
 
@@ -89,11 +89,15 @@ public final class Autoposter implements AutoCloseable {
     /** A missing token returns an inert instance: a forgotten environment variable must not take down a deploy. */
     static Autoposter create(String token, AutopostOptions options, String userAgent, Bot bot) {
         AutopostOptions resolved = options == null ? new AutopostOptions() : options;
-        if (token == null || token.isBlank()) {
+        String key = token == null ? "" : token.strip();
+        if (key.startsWith("Bearer ")) {
+            key = key.substring("Bearer ".length()).strip();
+        }
+        if (key.isEmpty()) {
             LOG.log(Level.WARNING, "No TheDiscordList stats token supplied; auto-posting is disabled.");
             return new Autoposter(resolved, null, bot);
         }
-        return new Autoposter(resolved, new ApiClient(resolved.baseUrl, token.strip(), userAgent), bot);
+        return new Autoposter(resolved, new ApiClient(resolved.baseUrl, key, userAgent), bot);
     }
 
     boolean isInert() {
@@ -211,6 +215,9 @@ public final class Autoposter implements AutoCloseable {
         }
         for (Publisher publisher : publishers()) {
             publisher.shutdown();
+        }
+        if (api != null) {
+            api.close();
         }
         for (Runnable hook : closeHooks) {
             try {

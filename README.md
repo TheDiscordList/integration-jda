@@ -11,12 +11,12 @@ Jackson that JDA already ships.
 <dependency>
     <groupId>com.thediscordlist</groupId>
     <artifactId>integration-jda</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
 </dependency>
 ```
 
 ```kotlin
-implementation("com.thediscordlist:integration-jda:0.1.0")
+implementation("com.thediscordlist:integration-jda:0.2.0")
 ```
 
 ## Quickstart
@@ -37,7 +37,7 @@ It starts three publishers:
 | Publisher | What it sends | Cadence |
 | --- | --- | --- |
 | Stats | `server_count`, `shard_count` | 5s after ready, then every 5 min, debounced on guild join/leave |
-| Heartbeat | per-shard status, latency and guild counts | every ~30s, plus shortly after any shard status change |
+| Heartbeat | per-shard status, latency and guild counts | every ~30s, plus after any shard status change, at least 10s after the previous beat |
 | Commands | your registered global slash commands | once, ~10s after ready |
 
 Your **stats token** is on the listing's manage page, under the API tab. It is
@@ -53,7 +53,7 @@ environment variable never takes down a deploy.
 | --- | --- | --- | --- |
 | One `JDA`, unsharded | the guild cache | this process | cluster 0 of 1 |
 | `ShardManager` running every shard | the guild cache of all shards | this process | cluster 0 of 1, every shard |
-| One `JDA` per process (`useSharding(id, total)`) | your `serverCount(...)` | shard 0 | cluster = shard id, of `total` |
+| One `JDA` per process (`useSharding(id, total)`) | your `serverCount(...)` | shard 0 | only with `cluster(id, count)` |
 | `ShardManager` running some shards per process | your `serverCount(...)` | the process with shard 0 | only with `cluster(id, count)` |
 
 ```java
@@ -64,9 +64,9 @@ Every process heartbeats for **itself**, with its own shards. A manager
 reporting "all fine" for a process whose host has died is exactly the failure
 the status page exists to catch.
 
-JDA has no way to ask another process for its guild count, so a bot split
-across processes needs to supply the total, and name its cluster when this
-package cannot work it out:
+JDA has no way to ask another process for its guild count or how many
+processes there are, so a bot split across processes needs to supply the total
+and name its cluster:
 
 ```java
 TheDiscordList.autopost(shardManager, System.getenv("TDL_TOKEN"), new AutopostOptions()
@@ -197,6 +197,7 @@ in constant time, and returns the parsed envelope. Failures throw
 | `event.event()` | `event.data()` |
 | --- | --- |
 | `listing.bumped` | `points`, `bumped_at`, `next_bump_at`, `user` |
+| `listing.bump_ready` | `ready_at` |
 | `listing.upvoted` | `voted_at`, `total_upvotes`, `user` |
 | `server.joined` | `joined_at`, `user` (server listings only) |
 | `bot.added` | `added_at`, `user` |
@@ -233,17 +234,18 @@ heartbeat's internal stats forward.
   suspends and re-probes every 30 minutes rather than disabling: the plan is
   checked per request, so a bot can gain it mid-run.
 - **Rate limits are shared.** Stats and commands share 60 requests a minute per
-  client IP, heartbeats get 120. A `429` suspends stats and commands together,
-  honouring `Retry-After` and `X-RateLimit-Reset`; heartbeats are never held
-  back by it, since a dropped heartbeat reads as "down". Other bots behind the
-  same egress IP count against you.
+  bot, heartbeats get 120. A `429` suspends stats and commands together,
+  honouring `Retry-After` and `X-RateLimit-Reset` for at most an hour;
+  heartbeats are never held back by it, since a dropped heartbeat reads as
+  "down".
 - **`404` never means "bad token".** It means the id is unknown or belongs to a
   server listing, and disables only that publisher. A `401` is the bad token,
   and stops every publisher.
 - `409` on commands means the listing is not set up for slash commands; the
   commands publisher switches off.
-- Transient failures (5xx, timeouts, network) are retried twice with jittered
-  exponential backoff, then left to the next run.
+- Transient failures (`408`, `425`, 5xx, timeouts, network) are retried twice
+  with jittered exponential backoff, then left to the next run. Any other `4xx`
+  is reported once and not retried.
 
 ## Requirements
 

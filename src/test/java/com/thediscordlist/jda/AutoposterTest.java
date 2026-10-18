@@ -6,6 +6,8 @@ import com.thediscordlist.jda.Autoposter.PostResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledForJreRange;
+import org.junit.jupiter.api.condition.JRE;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -153,6 +155,17 @@ class AutoposterTest {
     }
 
     @Test
+    void shardTransitionsBeatNoSoonerThanTenSecondsAfterTheLastBeat() throws Exception {
+        build();
+
+        poster.startHeartbeat();
+        server.take();
+        poster.shardsChanged();
+
+        server.assertQuiet(2_000);
+    }
+
+    @Test
     void shardTransitionsWaitOutAPlanSuspension() throws Exception {
         server.respond(403, "{}");
         build();
@@ -198,9 +211,9 @@ class AutoposterTest {
 
         assertEquals("throttled", await(poster.postStats()).skipped());
         server.take();
-        long now = System.currentTimeMillis();
-        assertTrue(poster.api().suspendedUntil() >= now + 115_000);
-        assertTrue(poster.api().suspendedUntil() <= now + 123_000);
+        long now = Publisher.now();
+        assertTrue(poster.api().suspendedUntil >= now + 115_000);
+        assertTrue(poster.api().suspendedUntil <= now + 123_000);
 
         assertEquals("suspended", await(poster.postCommands()).skipped());
         server.assertQuiet(200);
@@ -214,9 +227,11 @@ class AutoposterTest {
         long reset = System.currentTimeMillis() / 1000 + 300;
         server.respond(429, "{}", "Retry-After", "1", "X-RateLimit-Reset", Long.toString(reset));
 
+        long now = Publisher.now();
         await(build().postStats());
 
-        assertTrue(poster.api().suspendedUntil() >= reset * 1000);
+        assertTrue(poster.api().suspendedUntil >= now + 295_000);
+        assertTrue(poster.api().suspendedUntil <= Publisher.now() + 303_000);
     }
 
     @Test
@@ -224,7 +239,17 @@ class AutoposterTest {
         server.respond(429, "{}");
         await(build().postStats());
 
-        assertTrue(poster.api().suspendedUntil() >= System.currentTimeMillis() + 55_000);
+        assertTrue(poster.api().suspendedUntil >= Publisher.now() + 55_000);
+    }
+
+    @Test
+    void rateLimitSuspensionsAreCappedAtAnHour() throws Exception {
+        long reset = System.currentTimeMillis() / 1000 + 86_400;
+        server.respond(429, "{}", "Retry-After", "86400", "X-RateLimit-Reset", Long.toString(reset));
+
+        await(build().postStats());
+
+        assertTrue(poster.api().suspendedUntil <= Publisher.now() + ApiClient.MAX_RETRY_AFTER_MS + 2_001);
     }
 
     @Test
@@ -249,6 +274,26 @@ class AutoposterTest {
         assertEquals(500, result.status());
         assertEquals(3, server.pending());
         assertEquals(List.of("error:STATS:500:true"), events.log);
+        assertNull(poster.stats().disabledReason);
+    }
+
+    @Test
+    void requestTimeoutsAndTooEarlyAreRetried() throws Exception {
+        server.respond(408, "").respond(425, "");
+
+        assertTrue(await(build().postStats()).ok());
+        assertEquals(3, server.pending());
+    }
+
+    @Test
+    void otherClientErrorsAreNotRetried() throws Exception {
+        server.respond(405, "{}");
+
+        PostResult result = await(build().postStats());
+
+        assertEquals(405, result.status());
+        assertEquals(1, server.pending());
+        assertEquals(List.of("error:STATS:405:false"), events.log);
         assertNull(poster.stats().disabledReason);
     }
 
@@ -310,6 +355,25 @@ class AutoposterTest {
             assertEquals("disabled", await(inert.postCommands()).skipped());
             inert.close();
         }
+        server.assertQuiet(200);
+    }
+
+    @Test
+    void pastedBearerPrefixesAndWhitespaceAreStripped() throws Exception {
+        AutopostOptions options = new AutopostOptions().baseUrl(server.baseUrl()).listener(events);
+        poster = Autoposter.create("  Bearer tdl_token\n", options, "ua", bot);
+        poster.build("1", SINGLE);
+
+        assertTrue(await(poster.postHeartbeat()).ok());
+        assertEquals("Bearer tdl_token", server.take().headers().getFirst("Authorization"));
+    }
+
+    @Test
+    @EnabledForJreRange(min = JRE.JAVA_21)
+    void closeShutsTheHttpClientDown() throws Exception {
+        build().close();
+
+        assertEquals(ApiClient.Kind.TRANSIENT, poster.api().post("/bots/1/heartbeat", Map.of(), true).kind());
         server.assertQuiet(200);
     }
 

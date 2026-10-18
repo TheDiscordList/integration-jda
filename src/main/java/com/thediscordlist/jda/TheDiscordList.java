@@ -93,9 +93,8 @@ public final class TheDiscordList {
     }
 
     /**
-     * JDA has no cross-process primitive, so only layouts this process can see are detected: every shard here
-     * (cluster 0 of 1), or exactly one shard here, the {@code JDABuilder#useSharding} layout, where the shard
-     * is the cluster. Anything else needs {@link AutopostOptions#cluster}.
+     * JDA has no cross-process primitive, so the only layout this process can prove is every shard here (cluster
+     * 0 of 1). Anything else, {@code JDABuilder#useSharding} included, needs {@link AutopostOptions#cluster}.
      */
     static Topology detect(AutopostOptions.Cluster override, int localShards, int totalShards, int lowestLocalShard) {
         int total = Math.max(totalShards, 1);
@@ -105,9 +104,7 @@ public final class TheDiscordList {
         if (localShards >= total) {
             return Topology.allLocal(total);
         }
-        boolean hostsShardZero = lowestLocalShard == 0;
-        Integer clusterCount = localShards == 1 ? total : null;
-        return new Topology(lowestLocalShard, clusterCount, hostsShardZero, total, false);
+        return new Topology(lowestLocalShard, null, lowestLocalShard == 0, total, false);
     }
 
     /** Discord's own command shape, minus ids, versions and localisations the API ignores. */
