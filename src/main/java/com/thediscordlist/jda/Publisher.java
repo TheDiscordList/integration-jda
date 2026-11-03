@@ -154,17 +154,19 @@ abstract class Publisher {
     }
 
     /**
-     * Sends one request, retrying only transient failures. A retry that would outlast the next scheduled run
-     * is dropped: that run carries fresher data, and a failed request still burns rate-limit budget.
+     * Sends one request, retrying transient failures and, once its window lifts, a 429. A retry that would
+     * outlast the next scheduled run is dropped: that run carries fresher data, and a failed request still burns
+     * rate-limit budget.
      */
     final PostResult send(String path, Object body, boolean heartbeat, long nextTickMs) {
         ApiClient.Outcome outcome = null;
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
             outcome = ctx.api().post(path, body, heartbeat);
-            if (outcome.kind() != ApiClient.Kind.TRANSIENT || attempt == MAX_ATTEMPTS - 1) {
+            boolean throttled = outcome.kind() == ApiClient.Kind.THROTTLED;
+            if (!throttled && outcome.kind() != ApiClient.Kind.TRANSIENT || attempt == MAX_ATTEMPTS - 1) {
                 break;
             }
-            long delay = backoff(attempt);
+            long delay = throttled ? outcome.waitMs() : backoff(attempt);
             if (nextTickMs > 0 && delay >= nextTickMs) {
                 break;
             }

@@ -26,7 +26,12 @@ final class ApiClient {
 
     enum Kind { OK, PAYLOAD, AUTH, PLAN, CONFIG, THROTTLED, TRANSIENT, DROPPED }
 
-    record Outcome(Kind kind, Integer status, JsonNode body, String error) {
+    /** {@code waitMs} is how long a {@link Kind#THROTTLED} request should hold off. */
+    record Outcome(Kind kind, Integer status, JsonNode body, String error, long waitMs) {
+        Outcome(Kind kind, Integer status, JsonNode body, String error) {
+            this(kind, status, body, error, 0);
+        }
+
         static Outcome of(Kind kind, Integer status) {
             return new Outcome(kind, status, null, null);
         }
@@ -84,11 +89,12 @@ final class ApiClient {
             return Outcome.of(Kind.CONFIG, status);
         }
         if (status == 429) {
+            long waitMs = window(response.headers());
             // The server limits heartbeats apart from stats and commands, so one says nothing about the other.
             if (!heartbeat) {
-                suspend(response.headers());
+                suspendedUntil = Publisher.now() + waitMs;
             }
-            return Outcome.of(Kind.THROTTLED, status);
+            return new Outcome(Kind.THROTTLED, status, null, null, waitMs);
         }
         if (status == 408 || status == 425 || status >= 500) {
             return new Outcome(Kind.TRANSIENT, status, null, "TheDiscordList responded " + status + ".");
@@ -107,7 +113,7 @@ final class ApiClient {
         }
     }
 
-    private void suspend(HttpHeaders headers) {
+    private static long window(HttpHeaders headers) {
         double retryAfter = number(headers.firstValue("Retry-After").orElse(null));
         double reset = number(headers.firstValue("X-RateLimit-Reset").orElse(null));
         long waitMs = retryAfter > 0 ? Math.round(retryAfter * 1000) : DEFAULT_RETRY_AFTER_MS;
@@ -115,8 +121,7 @@ final class ApiClient {
         if (reset > 0) {
             waitMs = Math.max(waitMs, Math.round(reset * 1000) - System.currentTimeMillis());
         }
-        suspendedUntil = Publisher.now() + Math.min(waitMs, MAX_RETRY_AFTER_MS)
-                + ThreadLocalRandom.current().nextLong(2_001);
+        return Math.min(waitMs, MAX_RETRY_AFTER_MS) + ThreadLocalRandom.current().nextLong(2_001);
     }
 
     private static double number(String value) {

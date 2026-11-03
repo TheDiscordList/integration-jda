@@ -207,7 +207,7 @@ class AutoposterTest {
     void rateLimitSuspendsStatsAndCommandsButNotHeartbeats() throws Exception {
         bot.commands = List.of(Map.of("name", "ping"));
         server.respond(429, "{}", "Retry-After", "120");
-        build();
+        build(SINGLE, new AutopostOptions().statsInterval(Duration.ofMinutes(1)));
 
         assertEquals("throttled", await(poster.postStats()).skipped());
         server.take();
@@ -234,12 +234,32 @@ class AutoposterTest {
     }
 
     @Test
+    void aWindowThatLiftsBeforeTheNextTickIsRetried() throws Exception {
+        server.respond(429, "{}", "Retry-After", "1");
+
+        PostResult result = await(build().postStats());
+
+        assertTrue(result.ok());
+        assertEquals(2, server.pending());
+        assertEquals(List.of("posted:STATS:200"), events.log);
+    }
+
+    @Test
+    void aThrottledHeartbeatRetriesAfterItsWindow() throws Exception {
+        server.respond(429, "{}", "Retry-After", "1");
+
+        assertTrue(await(build().postHeartbeat()).ok());
+
+        assertEquals(2, server.pending());
+    }
+
+    @Test
     void rateLimitHonoursTheResetHeader() throws Exception {
         long reset = System.currentTimeMillis() / 1000 + 300;
         server.respond(429, "{}", "Retry-After", "1", "X-RateLimit-Reset", Long.toString(reset));
 
         long now = Publisher.now();
-        await(build().postStats());
+        await(build(SINGLE, new AutopostOptions().statsInterval(Duration.ofMinutes(1))).postStats());
 
         assertTrue(poster.api().suspendedUntil >= now + 295_000);
         assertTrue(poster.api().suspendedUntil <= Publisher.now() + 303_000);
@@ -248,7 +268,7 @@ class AutoposterTest {
     @Test
     void rateLimitWithoutRetryAfterWaitsAMinute() throws Exception {
         server.respond(429, "{}");
-        await(build().postStats());
+        await(build(SINGLE, new AutopostOptions().statsInterval(Duration.ofSeconds(30))).postStats());
 
         assertTrue(poster.api().suspendedUntil >= Publisher.now() + 55_000);
     }
