@@ -7,6 +7,7 @@ import net.dv8tion.jda.api.events.guild.GuildLeaveEvent;
 import net.dv8tion.jda.api.events.guild.UnavailableGuildJoinedEvent;
 import net.dv8tion.jda.api.events.guild.UnavailableGuildLeaveEvent;
 import net.dv8tion.jda.api.events.session.ReadyEvent;
+import net.dv8tion.jda.api.events.session.ShutdownEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.commands.Command;
 import net.dv8tion.jda.api.sharding.ShardManager;
@@ -60,7 +61,7 @@ public final class TheDiscordList {
                 token, options);
     }
 
-    private static Autoposter attach(JdaBot bot, String token, AutopostOptions options) {
+    static Autoposter attach(JdaBot bot, String token, AutopostOptions options) {
         AutopostOptions resolved = options == null ? new AutopostOptions() : options;
         Autoposter poster = Autoposter.create(token, resolved, USER_AGENT, bot);
         if (poster.isInert()) {
@@ -86,8 +87,9 @@ public final class TheDiscordList {
     static String status(JDA.Status status) {
         return switch (status) {
             case CONNECTED -> "ready";
-            case RECONNECT_QUEUED, WAITING_TO_RECONNECT, ATTEMPTING_TO_RECONNECT -> "resuming";
-            case DISCONNECTED, SHUTTING_DOWN, SHUTDOWN, FAILED_TO_LOGIN -> "disconnected";
+            // DISCONNECTED is every dropped socket: JDA moves on to a reconnect, or to SHUTDOWN if it gives up.
+            case DISCONNECTED, RECONNECT_QUEUED, WAITING_TO_RECONNECT, ATTEMPTING_TO_RECONNECT -> "resuming";
+            case SHUTTING_DOWN, SHUTDOWN, FAILED_TO_LOGIN -> "disconnected";
             default -> "connecting";
         };
     }
@@ -211,11 +213,14 @@ public final class TheDiscordList {
 
         @Override
         public List<Map<String, Object>> shards() {
+            // A queued shard is not in this list yet, so the API would take the rest for the whole bot.
+            boolean complete = queued.getAsInt() == 0;
             return shards.get().stream()
                     .sorted(Comparator.comparingInt(JdaBot::shardId))
                     .map(shard -> {
                         long ping = shard.getGatewayPing();
-                        return Bot.shard(shardId(shard), status(shard.getStatus()), ping >= 0 ? ping : null, guilds(shard));
+                        return Bot.shard(shardId(shard), status(shard.getStatus()), ping >= 0 ? ping : null,
+                                complete ? guilds(shard) : null);
                     })
                     .toList();
         }
@@ -299,6 +304,15 @@ public final class TheDiscordList {
         public void onStatusChange(StatusChangeEvent event) {
             if (!status(event.getOldStatus()).equals(status(event.getNewStatus()))) {
                 poster.shardsChanged();
+            }
+        }
+
+        /** Without this a live JVM keeps beating for a client that is gone. A restarting shard is requeued, so it stays. */
+        @Override
+        public void onShutdown(ShutdownEvent event) {
+            if (bot.queued.getAsInt() == 0
+                    && bot.shards.get().stream().allMatch(shard -> "disconnected".equals(status(shard.getStatus())))) {
+                poster.close();
             }
         }
     }

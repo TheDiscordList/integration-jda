@@ -26,7 +26,8 @@ interface Bot {
         if (latencyMs != null && latencyMs >= 0) {
             shard.put("latency_ms", Math.min(latencyMs, MAX_LATENCY_MS));
         }
-        if (guilds != null) {
+        // A count from a shard that is not ready is partial at best, and the API forwards it to the public listing.
+        if (guilds != null && "ready".equals(status)) {
             shard.put("guilds", guilds);
         }
         return shard;

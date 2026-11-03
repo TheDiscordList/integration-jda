@@ -11,12 +11,12 @@ Jackson that JDA already ships.
 <dependency>
     <groupId>com.thediscordlist</groupId>
     <artifactId>integration-jda</artifactId>
-    <version>0.2.0</version>
+    <version>0.2.1</version>
 </dependency>
 ```
 
 ```kotlin
-implementation("com.thediscordlist:integration-jda:0.2.0")
+implementation("com.thediscordlist:integration-jda:0.2.1")
 ```
 
 ## Quickstart
@@ -38,7 +38,7 @@ It starts three publishers:
 | --- | --- | --- |
 | Stats | `server_count`, `shard_count` | 5s after ready, then every 5 min, debounced on guild join/leave |
 | Heartbeat | per-shard status, latency and guild counts | every ~30s, plus after any shard status change, at least 10s after the previous beat |
-| Commands | your registered global slash commands | once, ~10s after ready |
+| Commands | your registered global slash commands | once, ~10s after ready, then every 5 min until it lands |
 
 Your **stats token** is on the listing's manage page, under the API tab. It is
 scoped to one listing, so it is the only credential this package needs.
@@ -83,7 +83,10 @@ TheDiscordList.autopost(shardManager, System.getenv("TDL_TOKEN"), new AutopostOp
 
 Server counts include guilds that are temporarily unavailable, which JDA keeps
 outside its guild cache. The count is only read once every local shard is
-`CONNECTED`, so a half-loaded cache is never published.
+`CONNECTED`, so a half-loaded cache is never published. A heartbeat leaves a
+shard's `guilds` out until it is `CONNECTED`, and every shard's while a
+`ShardManager` still has some queued, so a restart cannot zero or undercount the
+public number.
 
 ## Options
 
@@ -106,10 +109,14 @@ TheDiscordList.autopost(jda, token, new AutopostOptions()
         .listener(myListener));
 ```
 
-`statsMinGap` is a hard floor between two stats POSTs. A join storm, a mass
-reconnect and a manual `postStats()` all route through it, so the ceiling is
-structurally one request per minute. An unchanged count is not re-posted, except
+`statsMinGap` is a hard floor between two stats POSTs, and it cannot be set below
+60 seconds. A join storm, a mass reconnect and a manual `postStats()` all route
+through it, so the ceiling is structurally one request per minute. `statsInterval`
+never runs faster than `statsMinGap`. An unchanged count is not re-posted, except
 every 30 minutes so the listing never looks abandoned.
+
+`heartbeatInterval` is clamped to 15-60 seconds, and the API's response retunes
+it from there.
 
 `postEmptyCommands` is `false` because posting an empty list **clears** the
 command list on your listing. Turn it on only if that is what you mean.
@@ -144,7 +151,9 @@ listener callbacks arrive there, never on JDA's event thread.
 An explicit `postX()` also re-arms a publisher that disabled itself, so you can
 retry after fixing a token or a listing id without restarting.
 
-`close()` stops every timer and removes the event listener it added.
+`close()` stops every timer and removes the event listener it added. The poster
+also closes itself on JDA's `ShutdownEvent`, once no shard is left running or
+queued, so a `ShardManager` restarting a shard keeps it alive.
 
 ## Webhooks
 
@@ -234,10 +243,11 @@ heartbeat's internal stats forward.
   suspends and re-probes every 30 minutes rather than disabling: the plan is
   checked per request, so a bot can gain it mid-run.
 - **Rate limits are shared.** Stats and commands share 60 requests a minute per
-  bot, heartbeats get 120. A `429` suspends stats and commands together,
-  honouring `Retry-After` and `X-RateLimit-Reset` for at most an hour;
-  heartbeats are never held back by it, since a dropped heartbeat reads as
-  "down".
+  bot. A `429` suspends both, honouring `Retry-After` and `X-RateLimit-Reset`
+  for at most an hour, and the request is retried once the window lifts if that
+  comes before its next run. Heartbeats have a separate limit: a `429` on a beat
+  holds back neither stats nor commands, and a `429` on those holds back no beat,
+  since a dropped heartbeat reads as "down".
 - **`404` never means "bad token".** It means the id is unknown or belongs to a
   server listing, and disables only that publisher. A `401` is the bad token,
   and stops every publisher.
@@ -246,6 +256,9 @@ heartbeat's internal stats forward.
 - Transient failures (`408`, `425`, 5xx, timeouts, network) are retried twice
   with jittered exponential backoff, then left to the next run. Any other `4xx`
   is reported once and not retried.
+- **Commands are retried every 5 minutes** after a transient failure, a rate
+  limit or a failed fetch from Discord, until they land or the API rejects them.
+  A `403` re-probes every 30 minutes instead.
 
 ## Requirements
 
@@ -275,8 +288,8 @@ Each release:
 
 1. Set the version in `pom.xml` and `Autoposter.VERSION` (a test fails when
    they differ), and move the `Unreleased` notes in `CHANGELOG.md` under it.
-2. Commit, then `git tag v0.2.0 && git push origin v0.2.0`. The workflow
-   checks the tag matches the POM, runs the tests, signs, uploads and waits
+2. Commit, then `git tag v0.2.1 && git push origin v0.2.1`. The workflow
+   checks the tag is on `main` and matches the POM, runs the tests, signs, uploads and waits
    until the portal reports the release published.
 
 ## License
