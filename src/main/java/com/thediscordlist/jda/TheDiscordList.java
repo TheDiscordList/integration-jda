@@ -7,6 +7,7 @@ import net.dv8tion.jda.api.events.guild.GuildLeaveEvent;
 import net.dv8tion.jda.api.events.guild.UnavailableGuildJoinedEvent;
 import net.dv8tion.jda.api.events.guild.UnavailableGuildLeaveEvent;
 import net.dv8tion.jda.api.events.session.ReadyEvent;
+import net.dv8tion.jda.api.events.session.ShutdownEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.commands.Command;
 import net.dv8tion.jda.api.sharding.ShardManager;
@@ -60,7 +61,7 @@ public final class TheDiscordList {
                 token, options);
     }
 
-    private static Autoposter attach(JdaBot bot, String token, AutopostOptions options) {
+    static Autoposter attach(JdaBot bot, String token, AutopostOptions options) {
         AutopostOptions resolved = options == null ? new AutopostOptions() : options;
         Autoposter poster = Autoposter.create(token, resolved, USER_AGENT, bot);
         if (poster.isInert()) {
@@ -300,6 +301,15 @@ public final class TheDiscordList {
         public void onStatusChange(StatusChangeEvent event) {
             if (!status(event.getOldStatus()).equals(status(event.getNewStatus()))) {
                 poster.shardsChanged();
+            }
+        }
+
+        /** Without this a live JVM keeps beating for a client that is gone. A restarting shard is requeued, so it stays. */
+        @Override
+        public void onShutdown(ShutdownEvent event) {
+            if (bot.queued.getAsInt() == 0
+                    && bot.shards.get().stream().allMatch(shard -> "disconnected".equals(status(shard.getStatus())))) {
+                poster.close();
             }
         }
     }

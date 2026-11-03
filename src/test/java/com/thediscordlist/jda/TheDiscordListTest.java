@@ -3,6 +3,8 @@ package com.thediscordlist.jda;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.SelfUser;
+import net.dv8tion.jda.api.events.session.ShutdownEvent;
+import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.commands.Command;
 import net.dv8tion.jda.api.interactions.commands.DefaultMemberPermissions;
 import net.dv8tion.jda.api.utils.cache.SnowflakeCacheView;
@@ -10,11 +12,14 @@ import net.dv8tion.jda.api.utils.data.DataObject;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Proxy;
+import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -159,6 +164,37 @@ class TheDiscordListTest {
 
             poster.close();
             assertTrue(calls.contains("removeEventListener"));
+        }
+    }
+
+    @Test
+    void theLastShardShuttingDownStopsThePublishers() throws Exception {
+        try (StubServer server = new StubServer()) {
+            Map<String, Object> firstAnswers = jdaAnswers(0, 2, JDA.Status.CONNECTED, 42L, 3, Set.of());
+            Map<String, Object> secondAnswers = jdaAnswers(1, 2, JDA.Status.CONNECTED, 42L, 3, Set.of());
+            JDA first = stub(JDA.class, firstAnswers, new CopyOnWriteArrayList<>());
+            JDA second = stub(JDA.class, secondAnswers, new CopyOnWriteArrayList<>());
+            AtomicInteger queued = new AtomicInteger();
+            List<Object> listeners = new CopyOnWriteArrayList<>();
+            TheDiscordList.JdaBot bot = new TheDiscordList.JdaBot(() -> List.of(first, second), queued::get, () -> 2,
+                    listeners::add, listeners::remove);
+            Autoposter poster = TheDiscordList.attach(bot, "tdl_token",
+                    new AutopostOptions().baseUrl(server.baseUrl()).botId("1"));
+            ListenerAdapter hooks = (ListenerAdapter) listeners.get(0);
+
+            firstAnswers.put("getStatus", JDA.Status.SHUTDOWN);
+            hooks.onEvent(new ShutdownEvent(first, OffsetDateTime.now(), 1000));
+            assertTrue(poster.postHeartbeat().get(15, TimeUnit.SECONDS).ok(), "a sibling is still running");
+
+            secondAnswers.put("getStatus", JDA.Status.SHUTDOWN);
+            queued.set(1);
+            hooks.onEvent(new ShutdownEvent(second, OffsetDateTime.now(), 1000));
+            assertTrue(poster.postHeartbeat().get(15, TimeUnit.SECONDS).ok(), "a restart requeues its shard");
+
+            queued.set(0);
+            hooks.onEvent(new ShutdownEvent(second, OffsetDateTime.now(), 1000));
+            assertEquals("closed", poster.postHeartbeat().get(15, TimeUnit.SECONDS).skipped());
+            assertEquals(List.of(), listeners);
         }
     }
 
