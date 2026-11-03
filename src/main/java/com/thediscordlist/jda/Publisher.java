@@ -12,6 +12,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -42,6 +43,7 @@ abstract class Publisher {
 
     private final ScheduledThreadPoolExecutor executor;
     private final Set<Integer> reported = new HashSet<>();
+    private final Set<CompletableFuture<PostResult>> pending = ConcurrentHashMap.newKeySet();
     private ScheduledFuture<?> timer;
 
     Publisher(Kind kind, Autoposter owner, Context ctx) {
@@ -75,18 +77,22 @@ abstract class Publisher {
     }
 
     final CompletableFuture<PostResult> submit() {
-        try {
-            return CompletableFuture.supplyAsync(() -> {
-                try {
-                    return post();
-                } catch (Throwable error) {
-                    unexpected(error);
-                    return PostResult.skipped("error");
-                }
-            }, executor);
-        } catch (RejectedExecutionException closed) {
-            return CompletableFuture.completedFuture(PostResult.skipped("closed"));
+        CompletableFuture<PostResult> future = new CompletableFuture<>();
+        pending.add(future);
+        future.whenComplete((result, error) -> pending.remove(future));
+        execute(() -> {
+            PostResult result = PostResult.skipped("error");
+            try {
+                result = post();
+            } catch (Throwable error) {
+                unexpected(error);
+            }
+            future.complete(result);
+        });
+        if (executor.isShutdown()) {
+            future.complete(PostResult.skipped("closed"));
         }
+        return future;
     }
 
     final void schedule(long delayMs, Runnable run) {
@@ -111,6 +117,8 @@ abstract class Publisher {
 
     final void shutdown() {
         executor.shutdownNow();
+        // shutdownNow discards whatever was queued, and a caller may be blocked on those futures.
+        pending.forEach(future -> future.complete(PostResult.skipped("closed")));
     }
 
     private void guarded(Runnable run) {

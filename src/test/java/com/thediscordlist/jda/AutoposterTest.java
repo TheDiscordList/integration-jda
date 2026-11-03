@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -542,6 +543,25 @@ class AutoposterTest {
 
         assertEquals("closed", await(poster.postStats()).skipped());
         server.assertQuiet(200);
+    }
+
+    @Test
+    void closeCompletesManualPostsStillInTheQueue() throws Exception {
+        CountDownLatch never = new CountDownLatch(1);
+        build(SINGLE, new AutopostOptions().serverCount(() -> {
+            try {
+                never.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return 1;
+        }));
+
+        poster.postStats();
+        java.util.concurrent.CompletableFuture<PostResult> queued = poster.postStats();
+        poster.close();
+
+        assertEquals("closed", await(queued).skipped());
     }
 
     @Test
