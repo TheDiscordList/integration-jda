@@ -54,12 +54,11 @@ class TheDiscordListTest {
                 JDA.Status.AWAITING_LOGIN_CONFIRMATION, JDA.Status.LOADING_SUBSYSTEMS)) {
             assertEquals("connecting", TheDiscordList.status(status), status.name());
         }
-        for (JDA.Status status : List.of(JDA.Status.RECONNECT_QUEUED, JDA.Status.WAITING_TO_RECONNECT,
-                JDA.Status.ATTEMPTING_TO_RECONNECT)) {
+        for (JDA.Status status : List.of(JDA.Status.DISCONNECTED, JDA.Status.RECONNECT_QUEUED,
+                JDA.Status.WAITING_TO_RECONNECT, JDA.Status.ATTEMPTING_TO_RECONNECT)) {
             assertEquals("resuming", TheDiscordList.status(status), status.name());
         }
-        for (JDA.Status status : List.of(JDA.Status.DISCONNECTED, JDA.Status.SHUTTING_DOWN, JDA.Status.SHUTDOWN,
-                JDA.Status.FAILED_TO_LOGIN)) {
+        for (JDA.Status status : List.of(JDA.Status.SHUTTING_DOWN, JDA.Status.SHUTDOWN, JDA.Status.FAILED_TO_LOGIN)) {
             assertEquals("disconnected", TheDiscordList.status(status), status.name());
         }
     }

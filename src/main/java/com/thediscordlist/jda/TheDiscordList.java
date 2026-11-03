@@ -86,8 +86,9 @@ public final class TheDiscordList {
     static String status(JDA.Status status) {
         return switch (status) {
             case CONNECTED -> "ready";
-            case RECONNECT_QUEUED, WAITING_TO_RECONNECT, ATTEMPTING_TO_RECONNECT -> "resuming";
-            case DISCONNECTED, SHUTTING_DOWN, SHUTDOWN, FAILED_TO_LOGIN -> "disconnected";
+            // DISCONNECTED is every dropped socket: JDA moves on to a reconnect, or to SHUTDOWN if it gives up.
+            case DISCONNECTED, RECONNECT_QUEUED, WAITING_TO_RECONNECT, ATTEMPTING_TO_RECONNECT -> "resuming";
+            case SHUTTING_DOWN, SHUTDOWN, FAILED_TO_LOGIN -> "disconnected";
             default -> "connecting";
         };
     }
