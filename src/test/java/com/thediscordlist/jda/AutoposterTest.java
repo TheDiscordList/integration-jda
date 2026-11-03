@@ -90,7 +90,7 @@ class AutoposterTest {
                   {"id":0,"status":"ready","latency_ms":41,"guilds":10},
                   {"id":1,"status":"connecting"},
                   {"id":2,"status":"ready","latency_ms":600000,"guilds":3},
-                  {"id":3,"status":"connecting","guilds":0}]}"""), request.json());
+                  {"id":3,"status":"connecting"}]}"""), request.json());
         assertFalse(request.body().contains("null"));
     }
 

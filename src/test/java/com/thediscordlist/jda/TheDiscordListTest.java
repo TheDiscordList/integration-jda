@@ -72,7 +72,7 @@ class TheDiscordListTest {
 
         assertEquals(List.of(
                 Map.of("id", 0, "status", "ready", "latency_ms", 42L, "guilds", 4),
-                Map.of("id", 1, "status", "connecting", "guilds", 2)), bot.shards());
+                Map.of("id", 1, "status", "connecting")), bot.shards());
         assertNull(bot.serverCount(), "a shard still loading means a partial cache");
         assertEquals(Topology.allLocal(2), bot.topology(null));
 
