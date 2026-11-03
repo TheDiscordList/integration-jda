@@ -167,7 +167,7 @@ abstract class Publisher {
                 break;
             }
             long delay = throttled ? outcome.waitMs() : backoff(attempt);
-            if (nextTickMs > 0 && delay >= nextTickMs) {
+            if (delay >= nextTickMs) {
                 break;
             }
             try {
@@ -492,7 +492,7 @@ abstract class Publisher {
             super(Kind.COMMANDS, owner, ctx);
         }
 
-        /** Once. Commands change on deploy, and a deploy is a restart. */
+        /** One success is enough. Commands change on deploy, and a deploy is a restart. */
         @Override
         void start() {
             if (ctx.topology().statsPublisher()) {
@@ -507,10 +507,12 @@ abstract class Publisher {
         }
 
         private PostResult publish() {
+            clear();
             if (disabledReason != null) {
                 return PostResult.skipped("disabled");
             }
             if (now() < suspendedUntil) {
+                retryLater();
                 return PostResult.skipped("plan");
             }
 
@@ -518,14 +520,31 @@ abstract class Publisher {
             try {
                 commands = ctx.bot().commands(ctx.botId());
             } catch (Throwable error) {
-                unexpected(error);
+                owner.error(new Failure(kind, null, true, ApiClient.describe(error)));
+                retryLater();
                 return PostResult.skipped("fetch-failed");
             }
             // An empty array CLEARS the listing's commands, so it is never sent by accident.
             if (commands.isEmpty() && !ctx.options().postEmptyCommands) {
                 return PostResult.skipped("empty");
             }
-            return send("/bots/" + ctx.botId() + "/commands", Map.of("commands", commands), false, 0);
+            return send("/bots/" + ctx.botId() + "/commands", Map.of("commands", commands), false,
+                    ctx.options().commandsRetryMillis);
+        }
+
+        /** Nothing else will post these until the next deploy, so everything short of a rejection is tried again. */
+        @Override
+        PostResult react(ApiClient.Outcome outcome) {
+            PostResult result = super.react(outcome);
+            switch (outcome.kind()) {
+                case TRANSIENT, THROTTLED, DROPPED, PLAN -> retryLater();
+                default -> { }
+            }
+            return result;
+        }
+
+        private void retryLater() {
+            schedule(Math.max(ctx.options().commandsRetryMillis, suspendedUntil - now()), this::publish);
         }
     }
 }

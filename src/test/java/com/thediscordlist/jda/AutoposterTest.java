@@ -124,6 +124,49 @@ class AutoposterTest {
     }
 
     @Test
+    void commandsAreRetriedAfterAServerErrorUntilTheyLand() throws Exception {
+        bot.commands = List.of(Map.of("name", "ping"));
+        server.respond(503, "").respond(503, "").respond(503, "");
+        AutopostOptions options = new AutopostOptions();
+        options.commandsRetryMillis = 50;
+
+        assertEquals(503, await(build(SINGLE, options).postCommands()).status());
+
+        for (int request = 0; request < 4; request++) {
+            server.take();
+        }
+        server.assertQuiet(300);
+        assertEquals(List.of("error:COMMANDS:503:true", "posted:COMMANDS:200"), events.log);
+    }
+
+    @Test
+    void commandsAreRetriedAfterAFailedDiscordFetch() throws Exception {
+        bot.commands = List.of(Map.of("name", "ping"));
+        bot.commandsFailure = new IllegalStateException("Discord is down");
+        AutopostOptions options = new AutopostOptions();
+        options.commandsRetryMillis = 50;
+
+        assertEquals("fetch-failed", await(build(SINGLE, options).postCommands()).skipped());
+
+        assertEquals("/api/bots/161660517914509312/commands", server.take().path());
+        server.assertQuiet(300);
+        assertEquals(List.of("error:COMMANDS:null:true", "posted:COMMANDS:200"), events.log);
+    }
+
+    @Test
+    void aRejectedCommandListIsNotRetried() throws Exception {
+        bot.commands = List.of(Map.of("name", "ping"));
+        server.respond(422, "{}");
+        AutopostOptions options = new AutopostOptions();
+        options.commandsRetryMillis = 50;
+
+        assertEquals(422, await(build(SINGLE, options).postCommands()).status());
+
+        server.take();
+        server.assertQuiet(300);
+    }
+
+    @Test
     void unauthorizedDisablesEveryPublisherAndReportsOnce() throws Exception {
         server.respond(401, "{\"message\":\"Unauthenticated.\"}");
         PostResult result = await(build().postStats());
@@ -479,6 +522,7 @@ class AutoposterTest {
         volatile List<Map<String, Object>> shards = List.of(Bot.shard(0, "ready", 40L, 21), Bot.shard(1, "ready", 45L, 21));
         volatile Integer serverCount = 42;
         volatile List<Map<String, Object>> commands = List.of();
+        volatile RuntimeException commandsFailure;
 
         @Override
         public List<Map<String, Object>> shards() {
@@ -492,6 +536,11 @@ class AutoposterTest {
 
         @Override
         public List<Map<String, Object>> commands(String botId) {
+            RuntimeException failure = commandsFailure;
+            commandsFailure = null;
+            if (failure != null) {
+                throw failure;
+            }
             return new ArrayList<>(commands);
         }
     }

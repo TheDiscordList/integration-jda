@@ -50,6 +50,7 @@ public final class AutopostOptions {
     IntSupplier serverCount;
     Autoposter.Listener listener;
     long backoffBaseMillis = 1_000;
+    long commandsRetryMillis = 300_000;
 
     /** Default: {@value #DEFAULT_BASE_URL}. */
     public AutopostOptions baseUrl(String baseUrl) {
