@@ -84,7 +84,10 @@ final class ApiClient {
             return Outcome.of(Kind.CONFIG, status);
         }
         if (status == 429) {
-            suspend(response.headers());
+            // The server limits heartbeats apart from stats and commands, so one says nothing about the other.
+            if (!heartbeat) {
+                suspend(response.headers());
+            }
             return Outcome.of(Kind.THROTTLED, status);
         }
         if (status == 408 || status == 425 || status >= 500) {

@@ -223,6 +223,17 @@ class AutoposterTest {
     }
 
     @Test
+    void aThrottledHeartbeatLeavesStatsAlone() throws Exception {
+        server.respond(429, "{}", "Retry-After", "120");
+        build();
+
+        assertEquals("throttled", await(poster.postHeartbeat()).skipped());
+
+        assertEquals(0, poster.api().suspendedUntil);
+        assertTrue(await(poster.postStats()).ok());
+    }
+
+    @Test
     void rateLimitHonoursTheResetHeader() throws Exception {
         long reset = System.currentTimeMillis() / 1000 + 300;
         server.respond(429, "{}", "Retry-After", "1", "X-RateLimit-Reset", Long.toString(reset));
