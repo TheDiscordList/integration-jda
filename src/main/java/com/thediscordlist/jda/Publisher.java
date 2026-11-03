@@ -30,7 +30,7 @@ import java.util.function.IntSupplier;
 abstract class Publisher {
     static final int MAX_ATTEMPTS = 3;
     static final long PLAN_REPROBE_MS = 1_800_000;
-    private static final long BACKOFF_CAP_MS = 30_000;
+    static final long BACKOFF_CAP_MS = 30_000;
     private static final long ORIGIN = System.nanoTime();
 
     record Context(ApiClient api, Bot bot, Topology topology, String botId, AutopostOptions options) {}

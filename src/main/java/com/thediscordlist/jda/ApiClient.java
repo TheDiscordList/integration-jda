@@ -23,6 +23,7 @@ final class ApiClient {
     static final Duration TIMEOUT = Duration.ofSeconds(10);
     static final long DEFAULT_RETRY_AFTER_MS = 60_000;
     static final long MAX_RETRY_AFTER_MS = 3_600_000;
+    static final long RATE_LIMIT_JITTER_MS = 2_000;
 
     enum Kind { OK, PAYLOAD, AUTH, PLAN, CONFIG, THROTTLED, TRANSIENT, DROPPED }
 
@@ -121,7 +122,7 @@ final class ApiClient {
         if (reset > 0) {
             waitMs = Math.max(waitMs, Math.round(reset * 1000) - System.currentTimeMillis());
         }
-        return Math.min(waitMs, MAX_RETRY_AFTER_MS) + ThreadLocalRandom.current().nextLong(2_001);
+        return Math.min(waitMs, MAX_RETRY_AFTER_MS) + ThreadLocalRandom.current().nextLong(RATE_LIMIT_JITTER_MS + 1);
     }
 
     private static double number(String value) {
