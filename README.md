@@ -276,7 +276,7 @@ Each release:
 1. Set the version in `pom.xml` and `Autoposter.VERSION` (a test fails when
    they differ), and move the `Unreleased` notes in `CHANGELOG.md` under it.
 2. Commit, then `git tag v0.2.0 && git push origin v0.2.0`. The workflow
-   checks the tag matches the POM, runs the tests, signs, uploads and waits
+   checks the tag is on `main` and matches the POM, runs the tests, signs, uploads and waits
    until the portal reports the release published.
 
 ## License
