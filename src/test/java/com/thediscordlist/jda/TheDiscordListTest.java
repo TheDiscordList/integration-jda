@@ -86,6 +86,7 @@ class TheDiscordListTest {
 
         TheDiscordList.JdaBot booting = new TheDiscordList.JdaBot(() -> List.of(first), () -> 1, () -> 2, l -> {}, l -> {});
         assertNull(booting.serverCount(), "queued shards mean a partial cache");
+        assertEquals(List.of(Map.of("id", 0, "status", "ready", "latency_ms", 42L)), booting.shards());
         assertEquals(Topology.allLocal(2), booting.topology(null));
     }
 

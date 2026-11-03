@@ -213,11 +213,14 @@ public final class TheDiscordList {
 
         @Override
         public List<Map<String, Object>> shards() {
+            // A queued shard is not in this list yet, so the API would take the rest for the whole bot.
+            boolean complete = queued.getAsInt() == 0;
             return shards.get().stream()
                     .sorted(Comparator.comparingInt(JdaBot::shardId))
                     .map(shard -> {
                         long ping = shard.getGatewayPing();
-                        return Bot.shard(shardId(shard), status(shard.getStatus()), ping >= 0 ? ping : null, guilds(shard));
+                        return Bot.shard(shardId(shard), status(shard.getStatus()), ping >= 0 ? ping : null,
+                                complete ? guilds(shard) : null);
                     })
                     .toList();
         }

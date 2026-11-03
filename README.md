@@ -84,8 +84,9 @@ TheDiscordList.autopost(shardManager, System.getenv("TDL_TOKEN"), new AutopostOp
 Server counts include guilds that are temporarily unavailable, which JDA keeps
 outside its guild cache. The count is only read once every local shard is
 `CONNECTED`, so a half-loaded cache is never published. A heartbeat leaves a
-shard's `guilds` out until it is `CONNECTED`, so a restart cannot zero the public
-count.
+shard's `guilds` out until it is `CONNECTED`, and every shard's while a
+`ShardManager` still has some queued, so a restart cannot zero or undercount the
+public number.
 
 ## Options
 
