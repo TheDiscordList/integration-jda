@@ -19,6 +19,8 @@ public final class AutopostOptions {
     /** The production API. */
     public static final String DEFAULT_BASE_URL = "https://thediscordlist.com/api";
 
+    private static final Duration MIN_STATS_GAP = Duration.ofSeconds(60);
+
     /**
      * Names this process's place in a multi-process bot.
      *
@@ -41,7 +43,7 @@ public final class AutopostOptions {
     boolean statsEnabled = true;
     Duration statsInterval = Duration.ofMinutes(5);
     Duration statsDebounce = Duration.ofSeconds(20);
-    Duration statsMinGap = Duration.ofSeconds(60);
+    Duration statsMinGap = MIN_STATS_GAP;
     boolean heartbeatEnabled = true;
     Duration heartbeatInterval = Duration.ofSeconds(30);
     boolean commandsEnabled = true;
@@ -72,7 +74,7 @@ public final class AutopostOptions {
         return this;
     }
 
-    /** Default: 5 minutes. */
+    /** Default: 5 minutes. Never below {@link #statsMinGap}. */
     public AutopostOptions statsInterval(Duration interval) {
         this.statsInterval = nonNegative(interval, "statsInterval");
         return this;
@@ -84,9 +86,10 @@ public final class AutopostOptions {
         return this;
     }
 
-    /** Hard floor between two stats POSTs, manual ones included. Default: 60 seconds. */
+    /** Hard floor between two stats POSTs, manual ones included. Default and minimum: 60 seconds. */
     public AutopostOptions statsMinGap(Duration minGap) {
-        this.statsMinGap = nonNegative(minGap, "statsMinGap");
+        nonNegative(minGap, "statsMinGap");
+        this.statsMinGap = minGap.compareTo(MIN_STATS_GAP) < 0 ? MIN_STATS_GAP : minGap;
         return this;
     }
 
@@ -96,7 +99,7 @@ public final class AutopostOptions {
         return this;
     }
 
-    /** Starting cadence, retuned from the API's response. Default: 30 seconds. */
+    /** Starting cadence, clamped to 15-60 seconds and retuned from the API's response. Default: 30 seconds. */
     public AutopostOptions heartbeatInterval(Duration interval) {
         this.heartbeatInterval = nonNegative(interval, "heartbeatInterval");
         return this;

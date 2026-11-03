@@ -336,8 +336,9 @@ abstract class Publisher {
             }
         }
 
+        /** An interval under the gap would spin between the floor and the unchanged-count skip. */
         private long interval() {
-            return ctx.options().statsInterval.toMillis();
+            return Math.max(ctx.options().statsInterval.toMillis(), minGap());
         }
 
         private long minGap() {
@@ -361,7 +362,7 @@ abstract class Publisher {
 
         Heartbeat(Autoposter owner, Context ctx) {
             super(Kind.HEARTBEAT, owner, ctx);
-            this.interval = Math.max(ctx.options().heartbeatInterval.toMillis(), 1);
+            this.interval = clamp(ctx.options().heartbeatInterval.toMillis());
         }
 
         long interval() {
@@ -464,9 +465,12 @@ abstract class Publisher {
          */
         private void retune() {
             if (nextBeatWithinSeconds != null) {
-                long proposed = Math.round(nextBeatWithinSeconds / 3 * 1000);
-                interval = Math.min(Math.max(proposed, MIN_INTERVAL_MS), MAX_INTERVAL_MS);
+                interval = clamp(Math.round(nextBeatWithinSeconds / 3 * 1000));
             }
+        }
+
+        private static long clamp(long intervalMs) {
+            return Math.min(Math.max(intervalMs, MIN_INTERVAL_MS), MAX_INTERVAL_MS);
         }
 
         /**

@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -45,7 +46,8 @@ class AutoposterTest {
     }
 
     private Autoposter build(Topology topology, AutopostOptions options) {
-        options.baseUrl(server.baseUrl()).listener(events).statsMinGap(Duration.ZERO);
+        options.baseUrl(server.baseUrl()).listener(events);
+        options.statsMinGap = Duration.ZERO;
         options.backoffBaseMillis = 1;
         poster = Autoposter.create("tdl_token", options, "TheDiscordList-test/1.0", bot);
         poster.build("161660517914509312", topology);
@@ -407,6 +409,35 @@ class AutoposterTest {
         assertEquals("min-gap", await(poster.postStats()).skipped());
         server.take();
         server.assertQuiet(200);
+    }
+
+    @Test
+    void theMinGapCannotBeConfiguredBelowItsFloor() {
+        assertEquals(Duration.ofSeconds(60), new AutopostOptions().statsMinGap(Duration.ZERO).statsMinGap);
+        assertEquals(Duration.ofMinutes(2), new AutopostOptions().statsMinGap(Duration.ofMinutes(2)).statsMinGap);
+    }
+
+    @Test
+    void aZeroStatsIntervalCannotSpin() throws Exception {
+        AtomicInteger measured = new AtomicInteger();
+        AutopostOptions options = new AutopostOptions().statsInterval(Duration.ZERO).serverCount(() -> {
+            measured.incrementAndGet();
+            return 1;
+        });
+        build(SINGLE, options);
+        options.statsMinGap = Duration.ofMillis(50);
+
+        assertTrue(await(poster.postStats()).ok());
+        Thread.sleep(300);
+
+        assertTrue(measured.get() < 20, "measured " + measured.get() + " times");
+    }
+
+    @Test
+    void theHeartbeatStartIsClamped() {
+        assertEquals(15_000, build(SINGLE, new AutopostOptions().heartbeatInterval(Duration.ZERO)).heartbeat().interval());
+        poster.close();
+        assertEquals(60_000, build(SINGLE, new AutopostOptions().heartbeatInterval(Duration.ofHours(1))).heartbeat().interval());
     }
 
     @Test
