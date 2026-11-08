@@ -53,7 +53,7 @@
         <jda.version>5.6.1</jda.version>
         <!-- JDA ships Jackson at runtime; this only pins what we compile against. -->
         <jackson.version>2.22.4</jackson.version>
-        <junit.version>5.14.4</junit.version>
+        <junit.version>6.1.3</junit.version>
     </properties>
 
     <dependencyManagement>
