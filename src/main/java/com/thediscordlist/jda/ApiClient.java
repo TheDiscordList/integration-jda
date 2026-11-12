@@ -23,10 +23,16 @@ final class ApiClient {
     static final Duration TIMEOUT = Duration.ofSeconds(10);
     static final long DEFAULT_RETRY_AFTER_MS = 60_000;
     static final long MAX_RETRY_AFTER_MS = 3_600_000;
+    static final long RATE_LIMIT_JITTER_MS = 2_000;
 
     enum Kind { OK, PAYLOAD, AUTH, PLAN, CONFIG, THROTTLED, TRANSIENT, DROPPED }
 
-    record Outcome(Kind kind, Integer status, JsonNode body, String error) {
+    /** {@code waitMs} is how long a {@link Kind#THROTTLED} request should hold off. */
+    record Outcome(Kind kind, Integer status, JsonNode body, String error, long waitMs) {
+        Outcome(Kind kind, Integer status, JsonNode body, String error) {
+            this(kind, status, body, error, 0);
+        }
+
         static Outcome of(Kind kind, Integer status) {
             return new Outcome(kind, status, null, null);
         }
@@ -84,8 +90,12 @@ final class ApiClient {
             return Outcome.of(Kind.CONFIG, status);
         }
         if (status == 429) {
-            suspend(response.headers());
-            return Outcome.of(Kind.THROTTLED, status);
+            long waitMs = window(response.headers());
+            // The server limits heartbeats apart from stats and commands, so one says nothing about the other.
+            if (!heartbeat) {
+                suspendedUntil = Publisher.now() + waitMs;
+            }
+            return new Outcome(Kind.THROTTLED, status, null, null, waitMs);
         }
         if (status == 408 || status == 425 || status >= 500) {
             return new Outcome(Kind.TRANSIENT, status, null, "TheDiscordList responded " + status + ".");
@@ -104,7 +114,7 @@ final class ApiClient {
         }
     }
 
-    private void suspend(HttpHeaders headers) {
+    private static long window(HttpHeaders headers) {
         double retryAfter = number(headers.firstValue("Retry-After").orElse(null));
         double reset = number(headers.firstValue("X-RateLimit-Reset").orElse(null));
         long waitMs = retryAfter > 0 ? Math.round(retryAfter * 1000) : DEFAULT_RETRY_AFTER_MS;
@@ -112,8 +122,7 @@ final class ApiClient {
         if (reset > 0) {
             waitMs = Math.max(waitMs, Math.round(reset * 1000) - System.currentTimeMillis());
         }
-        suspendedUntil = Publisher.now() + Math.min(waitMs, MAX_RETRY_AFTER_MS)
-                + ThreadLocalRandom.current().nextLong(2_001);
+        return Math.min(waitMs, MAX_RETRY_AFTER_MS) + ThreadLocalRandom.current().nextLong(RATE_LIMIT_JITTER_MS + 1);
     }
 
     private static double number(String value) {

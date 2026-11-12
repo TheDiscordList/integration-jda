@@ -12,6 +12,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -29,7 +30,7 @@ import java.util.function.IntSupplier;
 abstract class Publisher {
     static final int MAX_ATTEMPTS = 3;
     static final long PLAN_REPROBE_MS = 1_800_000;
-    private static final long BACKOFF_CAP_MS = 30_000;
+    static final long BACKOFF_CAP_MS = 30_000;
     private static final long ORIGIN = System.nanoTime();
 
     record Context(ApiClient api, Bot bot, Topology topology, String botId, AutopostOptions options) {}
@@ -42,6 +43,7 @@ abstract class Publisher {
 
     private final ScheduledThreadPoolExecutor executor;
     private final Set<Integer> reported = new HashSet<>();
+    private final Set<CompletableFuture<PostResult>> pending = ConcurrentHashMap.newKeySet();
     private ScheduledFuture<?> timer;
 
     Publisher(Kind kind, Autoposter owner, Context ctx) {
@@ -75,18 +77,22 @@ abstract class Publisher {
     }
 
     final CompletableFuture<PostResult> submit() {
-        try {
-            return CompletableFuture.supplyAsync(() -> {
-                try {
-                    return post();
-                } catch (Throwable error) {
-                    unexpected(error);
-                    return PostResult.skipped("error");
-                }
-            }, executor);
-        } catch (RejectedExecutionException closed) {
-            return CompletableFuture.completedFuture(PostResult.skipped("closed"));
+        CompletableFuture<PostResult> future = new CompletableFuture<>();
+        pending.add(future);
+        future.whenComplete((result, error) -> pending.remove(future));
+        execute(() -> {
+            PostResult result = PostResult.skipped("error");
+            try {
+                result = post();
+            } catch (Throwable error) {
+                unexpected(error);
+            }
+            future.complete(result);
+        });
+        if (executor.isShutdown()) {
+            future.complete(PostResult.skipped("closed"));
         }
+        return future;
     }
 
     final void schedule(long delayMs, Runnable run) {
@@ -111,6 +117,8 @@ abstract class Publisher {
 
     final void shutdown() {
         executor.shutdownNow();
+        // shutdownNow discards whatever was queued, and a caller may be blocked on those futures.
+        pending.forEach(future -> future.complete(PostResult.skipped("closed")));
     }
 
     private void guarded(Runnable run) {
@@ -154,18 +162,20 @@ abstract class Publisher {
     }
 
     /**
-     * Sends one request, retrying only transient failures. A retry that would outlast the next scheduled run
-     * is dropped: that run carries fresher data, and a failed request still burns rate-limit budget.
+     * Sends one request, retrying transient failures and, once its window lifts, a 429. A retry that would
+     * outlast the next scheduled run is dropped: that run carries fresher data, and a failed request still burns
+     * rate-limit budget.
      */
     final PostResult send(String path, Object body, boolean heartbeat, long nextTickMs) {
         ApiClient.Outcome outcome = null;
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
             outcome = ctx.api().post(path, body, heartbeat);
-            if (outcome.kind() != ApiClient.Kind.TRANSIENT || attempt == MAX_ATTEMPTS - 1) {
+            boolean throttled = outcome.kind() == ApiClient.Kind.THROTTLED;
+            if (!throttled && outcome.kind() != ApiClient.Kind.TRANSIENT || attempt == MAX_ATTEMPTS - 1) {
                 break;
             }
-            long delay = backoff(attempt);
-            if (nextTickMs > 0 && delay >= nextTickMs) {
+            long delay = throttled ? outcome.waitMs() : backoff(attempt);
+            if (delay >= nextTickMs) {
                 break;
             }
             try {
@@ -296,8 +306,7 @@ abstract class Publisher {
             }
 
             int shardCount = ctx.topology().shardCount();
-            // Every stats post re-indexes the listing and fires a webhook even when nothing moved, and the
-            // server does not dedupe, so the skip has to happen here.
+            // The server treats a count that did not move as no news, so re-sending one only spends rate budget.
             if (count.equals(lastCount) && shardCount == lastShardCount && now() < lastPostAt + FORCE_AFTER_MS) {
                 schedule(interval(), this::tick);
                 return PostResult.skipped("unchanged");
@@ -334,8 +343,9 @@ abstract class Publisher {
             }
         }
 
+        /** An interval under the gap would spin between the floor and the unchanged-count skip. */
         private long interval() {
-            return ctx.options().statsInterval.toMillis();
+            return Math.max(ctx.options().statsInterval.toMillis(), minGap());
         }
 
         private long minGap() {
@@ -359,7 +369,7 @@ abstract class Publisher {
 
         Heartbeat(Autoposter owner, Context ctx) {
             super(Kind.HEARTBEAT, owner, ctx);
-            this.interval = Math.max(ctx.options().heartbeatInterval.toMillis(), 1);
+            this.interval = clamp(ctx.options().heartbeatInterval.toMillis());
         }
 
         long interval() {
@@ -462,9 +472,12 @@ abstract class Publisher {
          */
         private void retune() {
             if (nextBeatWithinSeconds != null) {
-                long proposed = Math.round(nextBeatWithinSeconds / 3 * 1000);
-                interval = Math.min(Math.max(proposed, MIN_INTERVAL_MS), MAX_INTERVAL_MS);
+                interval = clamp(Math.round(nextBeatWithinSeconds / 3 * 1000));
             }
+        }
+
+        private static long clamp(long intervalMs) {
+            return Math.min(Math.max(intervalMs, MIN_INTERVAL_MS), MAX_INTERVAL_MS);
         }
 
         /**
@@ -490,7 +503,7 @@ abstract class Publisher {
             super(Kind.COMMANDS, owner, ctx);
         }
 
-        /** Once. Commands change on deploy, and a deploy is a restart. */
+        /** One success is enough. Commands change on deploy, and a deploy is a restart. */
         @Override
         void start() {
             if (ctx.topology().statsPublisher()) {
@@ -505,10 +518,12 @@ abstract class Publisher {
         }
 
         private PostResult publish() {
+            clear();
             if (disabledReason != null) {
                 return PostResult.skipped("disabled");
             }
             if (now() < suspendedUntil) {
+                retryLater();
                 return PostResult.skipped("plan");
             }
 
@@ -516,14 +531,31 @@ abstract class Publisher {
             try {
                 commands = ctx.bot().commands(ctx.botId());
             } catch (Throwable error) {
-                unexpected(error);
+                owner.error(new Failure(kind, null, true, ApiClient.describe(error)));
+                retryLater();
                 return PostResult.skipped("fetch-failed");
             }
             // An empty array CLEARS the listing's commands, so it is never sent by accident.
             if (commands.isEmpty() && !ctx.options().postEmptyCommands) {
                 return PostResult.skipped("empty");
             }
-            return send("/bots/" + ctx.botId() + "/commands", Map.of("commands", commands), false, 0);
+            return send("/bots/" + ctx.botId() + "/commands", Map.of("commands", commands), false,
+                    ctx.options().commandsRetryMillis);
+        }
+
+        /** Nothing else will post these until the next deploy, so everything short of a rejection is tried again. */
+        @Override
+        PostResult react(ApiClient.Outcome outcome) {
+            PostResult result = super.react(outcome);
+            switch (outcome.kind()) {
+                case TRANSIENT, THROTTLED, DROPPED, PLAN -> retryLater();
+                default -> { }
+            }
+            return result;
+        }
+
+        private void retryLater() {
+            schedule(Math.max(ctx.options().commandsRetryMillis, suspendedUntil - now()), this::publish);
         }
     }
 }

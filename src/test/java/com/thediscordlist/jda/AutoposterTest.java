@@ -14,7 +14,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -45,7 +47,8 @@ class AutoposterTest {
     }
 
     private Autoposter build(Topology topology, AutopostOptions options) {
-        options.baseUrl(server.baseUrl()).listener(events).statsMinGap(Duration.ZERO);
+        options.baseUrl(server.baseUrl()).listener(events);
+        options.statsMinGap = Duration.ZERO;
         options.backoffBaseMillis = 1;
         poster = Autoposter.create("tdl_token", options, "TheDiscordList-test/1.0", bot);
         poster.build("161660517914509312", topology);
@@ -90,7 +93,7 @@ class AutoposterTest {
                   {"id":0,"status":"ready","latency_ms":41,"guilds":10},
                   {"id":1,"status":"connecting"},
                   {"id":2,"status":"ready","latency_ms":600000,"guilds":3},
-                  {"id":3,"status":"connecting","guilds":0}]}"""), request.json());
+                  {"id":3,"status":"connecting"}]}"""), request.json());
         assertFalse(request.body().contains("null"));
     }
 
@@ -121,6 +124,49 @@ class AutoposterTest {
         bot.commands = List.of();
         assertTrue(await(build(SINGLE, new AutopostOptions().postEmptyCommands(true)).postCommands()).ok());
         assertEquals("{\"commands\":[]}", server.take().body());
+    }
+
+    @Test
+    void commandsAreRetriedAfterAServerErrorUntilTheyLand() throws Exception {
+        bot.commands = List.of(Map.of("name", "ping"));
+        server.respond(503, "").respond(503, "").respond(503, "");
+        AutopostOptions options = new AutopostOptions();
+        options.commandsRetryMillis = 50;
+
+        assertEquals(503, await(build(SINGLE, options).postCommands()).status());
+
+        for (int request = 0; request < 4; request++) {
+            server.take();
+        }
+        server.assertQuiet(300);
+        assertEquals(List.of("error:COMMANDS:503:true", "posted:COMMANDS:200"), events.log);
+    }
+
+    @Test
+    void commandsAreRetriedAfterAFailedDiscordFetch() throws Exception {
+        bot.commands = List.of(Map.of("name", "ping"));
+        bot.commandsFailure = new IllegalStateException("Discord is down");
+        AutopostOptions options = new AutopostOptions();
+        options.commandsRetryMillis = 50;
+
+        assertEquals("fetch-failed", await(build(SINGLE, options).postCommands()).skipped());
+
+        assertEquals("/api/bots/161660517914509312/commands", server.take().path());
+        server.assertQuiet(300);
+        assertEquals(List.of("error:COMMANDS:null:true", "posted:COMMANDS:200"), events.log);
+    }
+
+    @Test
+    void aRejectedCommandListIsNotRetried() throws Exception {
+        bot.commands = List.of(Map.of("name", "ping"));
+        server.respond(422, "{}");
+        AutopostOptions options = new AutopostOptions();
+        options.commandsRetryMillis = 50;
+
+        assertEquals(422, await(build(SINGLE, options).postCommands()).status());
+
+        server.take();
+        server.assertQuiet(300);
     }
 
     @Test
@@ -207,7 +253,7 @@ class AutoposterTest {
     void rateLimitSuspendsStatsAndCommandsButNotHeartbeats() throws Exception {
         bot.commands = List.of(Map.of("name", "ping"));
         server.respond(429, "{}", "Retry-After", "120");
-        build();
+        build(SINGLE, new AutopostOptions().statsInterval(Duration.ofMinutes(1)));
 
         assertEquals("throttled", await(poster.postStats()).skipped());
         server.take();
@@ -223,12 +269,43 @@ class AutoposterTest {
     }
 
     @Test
+    void aThrottledHeartbeatLeavesStatsAlone() throws Exception {
+        server.respond(429, "{}", "Retry-After", "120");
+        build();
+
+        assertEquals("throttled", await(poster.postHeartbeat()).skipped());
+
+        assertEquals(0, poster.api().suspendedUntil);
+        assertTrue(await(poster.postStats()).ok());
+    }
+
+    @Test
+    void aWindowThatLiftsBeforeTheNextTickIsRetried() throws Exception {
+        server.respond(429, "{}", "Retry-After", "1");
+
+        PostResult result = await(build().postStats());
+
+        assertTrue(result.ok());
+        assertEquals(2, server.pending());
+        assertEquals(List.of("posted:STATS:200"), events.log);
+    }
+
+    @Test
+    void aThrottledHeartbeatRetriesAfterItsWindow() throws Exception {
+        server.respond(429, "{}", "Retry-After", "1");
+
+        assertTrue(await(build().postHeartbeat()).ok());
+
+        assertEquals(2, server.pending());
+    }
+
+    @Test
     void rateLimitHonoursTheResetHeader() throws Exception {
         long reset = System.currentTimeMillis() / 1000 + 300;
         server.respond(429, "{}", "Retry-After", "1", "X-RateLimit-Reset", Long.toString(reset));
 
         long now = Publisher.now();
-        await(build().postStats());
+        await(build(SINGLE, new AutopostOptions().statsInterval(Duration.ofMinutes(1))).postStats());
 
         assertTrue(poster.api().suspendedUntil >= now + 295_000);
         assertTrue(poster.api().suspendedUntil <= Publisher.now() + 303_000);
@@ -237,7 +314,7 @@ class AutoposterTest {
     @Test
     void rateLimitWithoutRetryAfterWaitsAMinute() throws Exception {
         server.respond(429, "{}");
-        await(build().postStats());
+        await(build(SINGLE, new AutopostOptions().statsInterval(Duration.ofSeconds(30))).postStats());
 
         assertTrue(poster.api().suspendedUntil >= Publisher.now() + 55_000);
     }
@@ -333,6 +410,35 @@ class AutoposterTest {
         assertEquals("min-gap", await(poster.postStats()).skipped());
         server.take();
         server.assertQuiet(200);
+    }
+
+    @Test
+    void theMinGapCannotBeConfiguredBelowItsFloor() {
+        assertEquals(Duration.ofSeconds(60), new AutopostOptions().statsMinGap(Duration.ZERO).statsMinGap);
+        assertEquals(Duration.ofMinutes(2), new AutopostOptions().statsMinGap(Duration.ofMinutes(2)).statsMinGap);
+    }
+
+    @Test
+    void aZeroStatsIntervalCannotSpin() throws Exception {
+        AtomicInteger measured = new AtomicInteger();
+        AutopostOptions options = new AutopostOptions().statsInterval(Duration.ZERO).serverCount(() -> {
+            measured.incrementAndGet();
+            return 1;
+        });
+        build(SINGLE, options);
+        options.statsMinGap = Duration.ofMillis(50);
+
+        assertTrue(await(poster.postStats()).ok());
+        Thread.sleep(300);
+
+        assertTrue(measured.get() < 20, "measured " + measured.get() + " times");
+    }
+
+    @Test
+    void theHeartbeatStartIsClamped() {
+        assertEquals(15_000, build(SINGLE, new AutopostOptions().heartbeatInterval(Duration.ZERO)).heartbeat().interval());
+        poster.close();
+        assertEquals(60_000, build(SINGLE, new AutopostOptions().heartbeatInterval(Duration.ofHours(1))).heartbeat().interval());
     }
 
     @Test
@@ -440,6 +546,25 @@ class AutoposterTest {
     }
 
     @Test
+    void closeCompletesManualPostsStillInTheQueue() throws Exception {
+        CountDownLatch never = new CountDownLatch(1);
+        build(SINGLE, new AutopostOptions().serverCount(() -> {
+            try {
+                never.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return 1;
+        }));
+
+        poster.postStats();
+        java.util.concurrent.CompletableFuture<PostResult> queued = poster.postStats();
+        poster.close();
+
+        assertEquals("closed", await(queued).skipped());
+    }
+
+    @Test
     void versionMatchesThePom() {
         assertEquals(System.getProperty("project.version"), Autoposter.VERSION);
     }
@@ -448,6 +573,7 @@ class AutoposterTest {
         volatile List<Map<String, Object>> shards = List.of(Bot.shard(0, "ready", 40L, 21), Bot.shard(1, "ready", 45L, 21));
         volatile Integer serverCount = 42;
         volatile List<Map<String, Object>> commands = List.of();
+        volatile RuntimeException commandsFailure;
 
         @Override
         public List<Map<String, Object>> shards() {
@@ -461,6 +587,11 @@ class AutoposterTest {
 
         @Override
         public List<Map<String, Object>> commands(String botId) {
+            RuntimeException failure = commandsFailure;
+            commandsFailure = null;
+            if (failure != null) {
+                throw failure;
+            }
             return new ArrayList<>(commands);
         }
     }
