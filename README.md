@@ -250,8 +250,9 @@ heartbeat's internal stats forward.
 ## Requirements
 
 - Java 17 or newer
-- JDA 5.x (`net.dv8tion:JDA`), which you add yourself; this package declares it
-  `provided`. Built and tested against 5.6.1, also compiled against 5.0.0.
+- JDA 5.x or 6.x (`net.dv8tion:JDA`), which you add yourself; this package
+  declares it `provided`. Built and tested against 6.7.0, also compiled against
+  5.0.0.
 
 ## Publishing (maintainers)
 
