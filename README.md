@@ -11,12 +11,12 @@ Jackson that JDA already ships.
 <dependency>
     <groupId>com.thediscordlist</groupId>
     <artifactId>integration-jda</artifactId>
-    <version>0.2.1</version>
+    <version>0.3.0</version>
 </dependency>
 ```
 
 ```kotlin
-implementation("com.thediscordlist:integration-jda:0.2.1")
+implementation("com.thediscordlist:integration-jda:0.3.0")
 ```
 
 ## Quickstart
@@ -289,7 +289,7 @@ Each release:
 
 1. Set the version in `pom.xml` and `Autoposter.VERSION` (a test fails when
    they differ), and move the `Unreleased` notes in `CHANGELOG.md` under it.
-2. Commit, then `git tag v0.2.1 && git push origin v0.2.1`. The workflow
+2. Commit, then `git tag v0.3.0 && git push origin v0.3.0`. The workflow
    checks the tag is on `main` and matches the POM, runs the tests, signs, uploads and waits
    until the portal reports the release published.
 

@@ -6,7 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.2.1] - 2026-11-03
+## [0.3.0] - 2026-11-12
+
+### Added
+
+- JDA 6 support. The package is built and tested against JDA 6.7.0 and still
+  compiles against 5.0.0, so 5.x keeps working.
 
 ### Changed
 
@@ -25,6 +30,10 @@ All notable changes to this project are documented here. The format follows
 - `statsMinGap` cannot go below 60 seconds, `statsInterval` cannot go below
   `statsMinGap`, and the starting `heartbeatInterval` is clamped to 15-60
   seconds.
+- Jackson, which stays `provided`, is compiled against 2.22.4 and aligned
+  through its BOM, clearing the `jackson-core` CVEs in the build.
+- Maven build plugins, JUnit (6.1.3) and the CI actions are on their latest
+  releases.
 
 ### Fixed
 
